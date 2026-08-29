@@ -1,0 +1,45 @@
+{
+  "name": "open-pii-extractor",
+  "productName": "Open PII Extractor",
+  "version": "0.1.0",
+  "description": "Offline VA letter redactor by RateMyVSO.net. Auto-redacts PII from VA letters, then you check it. Nothing ever leaves your computer.",
+  "main": "main.js",
+  "license": "MIT",
+  "author": "RateMyVSO.net",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/pii-redaction.test.js",
+    "dist": "electron-builder --win"
+  },
+  "dependencies": {
+    "pdf-to-img": "^4.5.0",
+    "tesseract.js": "^5.1.1"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "net.ratemyvso.openpiiextractor",
+    "productName": "Open PII Extractor",
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**",
+      "renderer/**",
+      "assets/**"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/tessdata",
+        "to": "tessdata"
+      }
+    ]
+  }
+}
