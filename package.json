@@ -1,7 +1,7 @@
 {
   "name": "open-pii-extractor",
   "productName": "Open PII Extractor",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Offline VA letter redactor by RateMyVSO.net. Auto-redacts PII from VA letters, then you check it. Nothing ever leaves your computer.",
   "main": "main.js",
   "license": "MIT",
@@ -42,8 +42,10 @@
       "renderer/**",
       "assets/**",
       "!**/node_modules/@mapbox/node-pre-gyp/**",
-      "!**/node_modules/tar/**",
-      "!**/node_modules/canvas/build/**"
+      "!**/node_modules/tar/**"
+    ],
+    "asarUnpack": [
+      "**/node_modules/canvas/**"
     ],
     "extraResources": [
       {

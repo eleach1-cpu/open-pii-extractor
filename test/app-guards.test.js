@@ -71,3 +71,22 @@ test('PDF export is a labeled text reconstruction with wrapped, paginated text',
   assert.ok(doc.getPageCount() >= 3, `expected pagination, got ${doc.getPageCount()} page(s)`);
   assert.ok(NOTE.includes('Not the original document layout'), 'reconstruction label text changed');
 });
+
+// REGRESSION GUARD, 2026-08-29. The shipped v1.0.0/v1.1.0 installers excluded
+// node_modules/canvas/build from the bundle, so canvas.node was absent and
+// canvas/lib/bindings.js (an unconditional require of ../build/Release/canvas.node)
+// threw MODULE_NOT_FOUND. That killed every scanned PDF, because pdf-to-img
+// rasterizes pages through canvas, and it took the original-layout export for
+// scanned input with it. Dev and `npm test` could not see it: they run from the
+// source tree where the binary exists, so only the packaged artifact was broken.
+// A .node file also cannot be dlopen'ed from inside an asar archive, so shipping
+// it is not enough on its own, it must be unpacked as well.
+test('the packaging config ships the native canvas binary, unpacked', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const files = pkg.build.files || [];
+  const excludesCanvas = files.some((f) => /^!.*canvas/.test(f));
+  assert.ok(!excludesCanvas, 'build.files excludes canvas: scanned PDFs will fail in the packaged app');
+  const unpack = pkg.build.asarUnpack || [];
+  assert.ok(unpack.some((p) => p.includes('canvas')),
+    'canvas must be in asarUnpack: a .node cannot load from inside app.asar');
+});
