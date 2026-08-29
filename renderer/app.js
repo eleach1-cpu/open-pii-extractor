@@ -13,6 +13,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = './pdfjs/pdf.worker.min.mjs';
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg']);
 const RASTER_SCALE = 2;
+// Renderer-side copies of the limits for early, friendly rejection. The main
+// process re-validates everything; these are convenience, not the boundary.
+const R_LIMITS = { MAX_FILES: 5, MAX_FILE_BYTES: 30 * 1024 * 1024, MAX_BATCH_BYTES: 80 * 1024 * 1024, MAX_DIGITAL_PDF_PAGES: 60, MAX_IMAGE_PIXELS: 40 * 1000 * 1000 };
 
 // What the last staging produced. app.js owns the buffers; safe-preview.js
 // owns the redaction metadata (window.__redactMeta = { spans, layouts }).
@@ -46,35 +49,125 @@ function b64FromBuffer(buf) {
   return btoa(bin);
 }
 
-// files: [{ name, ext, base64 }] (open dialog) or [{ name, ext, arrayBuffer }]
-// (drag-drop). Route each to text or OCR; remember everything for export.
-async function stageAndPreview(files) {
+// Stale-state clearing (safety handoff §5/§9): every rejection wipes the
+// staged buffers AND the redaction metadata so an old result can never be
+// exported after a failed newer attempt. safe-preview calls this from its
+// error path too.
+window.clearStagedState = function clearStagedState() {
   stagedFiles = [];
-  const payload = [];
-  for (const f of files.slice(0, 5)) {
-    const ext = (f.ext || '').toLowerCase();
-    if (ext === '.pdf') {
-      const buf = f.arrayBuffer || Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0)).buffer;
-      // pdf.js consumes (detaches) the buffer it is given, so keep OUR copy
-      // and hand pdf.js a throwaway clone.
-      const extracted = await extractTextFromPdf(buf.slice(0));
-      if (!extracted.isImageOnly && extracted.text) {
-        stagedFiles.push({ name: f.name, kind: 'digital-pdf', buffer: buf });
-        payload.push({ name: f.name, kind: 'text', text: extracted.text });
-      } else {
-        stagedFiles.push({ name: f.name, kind: 'ocr-pdf' });
-        payload.push({ name: f.name, kind: 'pdf', base64: f.base64 || b64FromBuffer(buf) });
+  window.__redactMeta = null;
+};
+
+function stageError(msg) {
+  window.clearStagedState();
+  window.LetterSafePreview.showError(msg);
+}
+
+// Per-page classification of a digital PDF (safety handoff §7): a page with
+// real digital text is 'digital'; a page below the text floor is proven
+// BLANK from its raster ink or it makes the whole file OCR-routed (minimum
+// safe implementation: one scanned page routes the entire file to OCR, so
+// no page can silently skip processing).
+async function classifyPdf(arrayBuffer) {
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, disableFontFace: true, verbosity: 0 });
+  const pdf = await loadingTask.promise;
+  if (pdf.numPages > R_LIMITS.MAX_DIGITAL_PDF_PAGES) {
+    throw new Error(`This PDF has ${pdf.numPages} pages; the limit is ${R_LIMITS.MAX_DIGITAL_PDF_PAGES}.`);
+  }
+  const pages = [];
+  const pageTexts = [];
+  let hasScanned = false;
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const text = content.items.map((it) => (it && it.str) ? it.str : '').join(' ');
+    pageTexts.push(text);
+    if (text.trim().length >= 80) {
+      pages.push({ pageNumber: i, route: 'digital', chars: text.length });
+    } else {
+      // Blank proof: render small and count ink. Low text alone is never
+      // proof of blank (safety handoff §8).
+      const viewport = page.getViewport({ scale: 0.4 });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      const img = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+      let dark = 0;
+      for (let p = 0; p < img.data.length; p += 4) {
+        const lum = 0.3 * img.data[p] + 0.6 * img.data[p + 1] + 0.1 * img.data[p + 2];
+        if (lum < 160) dark++;
       }
-    } else if (IMAGE_EXT.has(ext)) {
-      stagedFiles.push({ name: f.name, kind: 'image' });
-      payload.push({ name: f.name, kind: 'image', base64: f.base64 || b64FromBuffer(f.arrayBuffer) });
+      const blank = dark / (img.data.length / 4) < 0.001;
+      if (blank) pages.push({ pageNumber: i, route: 'blank', chars: text.length });
+      else { hasScanned = true; pages.push({ pageNumber: i, route: 'scanned', chars: text.length }); }
     }
   }
-  if (!payload.length) {
-    window.LetterSafePreview.previewText('');
-    return;
+  return { pages, hasScanned, fullText: pageTexts.join('\n\n').trim(), pageCount: pdf.numPages };
+}
+
+// files: [{ name, ext, base64 }] (open dialog) or [{ name, ext, arrayBuffer }]
+// (drag-drop). Route each to text or OCR; remember everything for export.
+// Any invalid or over-limit file rejects the WHOLE batch with a visible,
+// named reason (owner default 1); unsupported types are never ignored.
+async function stageAndPreview(files) {
+  window.clearStagedState();
+  if (files.length > R_LIMITS.MAX_FILES) {
+    return stageError(`You dropped ${files.length} files; the limit is ${R_LIMITS.MAX_FILES} at a time.`);
   }
+  const payload = [];
+  let batchBytes = 0;
+  try {
+    for (const f of files) {
+      const ext = (f.ext || '').toLowerCase();
+      const size = f.arrayBuffer ? f.arrayBuffer.byteLength : Math.floor((f.base64 || '').length * 3 / 4);
+      if (size > R_LIMITS.MAX_FILE_BYTES) {
+        return stageError(`"${f.name}" is ${(size / 1048576).toFixed(1)} MB; the per-file limit is ${Math.round(R_LIMITS.MAX_FILE_BYTES / 1048576)} MB.`);
+      }
+      batchBytes += size;
+      if (batchBytes > R_LIMITS.MAX_BATCH_BYTES) {
+        return stageError(`Those files together pass the ${Math.round(R_LIMITS.MAX_BATCH_BYTES / 1048576)} MB batch limit.`);
+      }
+      if (ext === '.pdf') {
+        const buf = f.arrayBuffer || Uint8Array.from(atob(f.base64), (c) => c.charCodeAt(0)).buffer;
+        // pdf.js consumes (detaches) the buffer it is given, so keep OUR
+        // copy and hand pdf.js a throwaway clone.
+        const classified = await classifyPdf(buf.slice(0));
+        if (!classified.hasScanned && classified.fullText.trim()) {
+          stagedFiles.push({ name: f.name, kind: 'digital-pdf', buffer: buf, pages: classified.pages });
+          payload.push({ name: f.name, kind: 'text', text: classified.fullText });
+        } else {
+          // At least one non-blank page has no digital text: the ENTIRE
+          // file goes through OCR so no page is skipped.
+          stagedFiles.push({ name: f.name, kind: 'ocr-pdf', pages: classified.pages });
+          payload.push({ name: f.name, kind: 'pdf', base64: f.base64 || b64FromBuffer(buf) });
+        }
+      } else if (IMAGE_EXT.has(ext)) {
+        const b64 = f.base64 || b64FromBuffer(f.arrayBuffer);
+        const dims = await imageDims(b64).catch(() => null);
+        if (dims && dims.w * dims.h > R_LIMITS.MAX_IMAGE_PIXELS) {
+          return stageError(`"${f.name}" is ${Math.round(dims.w * dims.h / 1e6)} megapixels; the limit is ${Math.round(R_LIMITS.MAX_IMAGE_PIXELS / 1e6)} MP.`);
+        }
+        stagedFiles.push({ name: f.name, kind: 'image' });
+        payload.push({ name: f.name, kind: 'image', base64: b64 });
+      } else {
+        return stageError(`"${f.name}" is not a supported type. PDF, PNG, and JPG are supported.`);
+      }
+    }
+  } catch (e) {
+    return stageError(e.message || 'Could not read that file.');
+  }
+  if (!payload.length) return stageError('No supported files found.');
   window.LetterSafePreview.previewFiles(payload);
+}
+
+function imageDims(base64) {
+  return new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+    im.onerror = () => reject(new Error('undecodable image'));
+    im.src = 'data:image/png;base64,' + base64;
+  });
 }
 
 // ---- Original-layout export ------------------------------------------------
@@ -220,15 +313,45 @@ window.exportLayoutPdf = async function exportLayoutPdf(tappedWords) {
   return window.api.saveLayoutPdf(pages);
 };
 
+// ---- First-launch terms gate (safety handoff §9A) --------------------------
+// The gate is enforced in the MAIN process; this overlay is the honest UI
+// for it. No Escape, no backdrop, no way around it in the renderer, and even
+// a bypassed renderer gets refused by every privileged IPC handler.
+async function initTermsGate() {
+  const gate = document.getElementById('terms-gate');
+  const box = document.getElementById('terms-checkbox');
+  const accept = document.getElementById('terms-accept');
+  const decline = document.getElementById('terms-decline');
+  const why = document.getElementById('terms-why');
+  const state = await window.api.termsState();
+  if (state && state.accepted) { gate.hidden = true; return; }
+  gate.hidden = false;
+  document.getElementById('terms-title').focus();
+  box.addEventListener('change', () => {
+    accept.disabled = !box.checked;
+    why.textContent = box.checked ? '' : 'Check the box above to enable Accept and continue.';
+  });
+  accept.addEventListener('click', async () => {
+    if (!box.checked) return;
+    const r = await window.api.termsAccept();
+    if (r && r.accepted) gate.hidden = true;
+  });
+  decline.addEventListener('click', () => window.api.termsDecline());
+  gate.addEventListener('keydown', (e) => { if (e.key === 'Escape') e.preventDefault(); });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const drop = document.getElementById('drop-zone');
   const choose = document.getElementById('choose-files');
   const redactPaste = document.getElementById('redact-paste');
   const pasteBox = document.getElementById('paste-text');
 
+  initTermsGate();
+
   choose.addEventListener('click', async () => {
     const files = await window.api.openFiles();
-    if (files.length) stageAndPreview(files);
+    if (files && files.error) return stageError(files.error);
+    if (Array.isArray(files) && files.length) stageAndPreview(files);
   });
 
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('dragging'); });
@@ -236,6 +359,10 @@ document.addEventListener('DOMContentLoaded', () => {
   drop.addEventListener('drop', async (e) => {
     e.preventDefault();
     drop.classList.remove('dragging');
+    // Count check BEFORE reading a single byte (safety handoff §9).
+    if (e.dataTransfer.files.length > R_LIMITS.MAX_FILES) {
+      return stageError(`You dropped ${e.dataTransfer.files.length} files; the limit is ${R_LIMITS.MAX_FILES} at a time.`);
+    }
     const files = [];
     for (const file of e.dataTransfer.files) {
       const dot = file.name.lastIndexOf('.');
@@ -249,7 +376,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   redactPaste.addEventListener('click', () => {
-    stagedFiles = [];
+    window.clearStagedState();
     const t = (pasteBox.value || '').trim();
     if (t) window.LetterSafePreview.previewText(t);
   });

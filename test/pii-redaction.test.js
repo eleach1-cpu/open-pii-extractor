@@ -265,9 +265,32 @@ test('stripLetterPII false-positive guard: a regulation citation with digits sur
   assert.strictEqual(stripLetterPII('38 CFR 4.130'), '38 CFR 4.130');
 });
 
-test('stripLetterPII false-positive guard: a 10-digit phone-shaped number without a label survives (no phone rule, out of scope)', () => {
-  assert.strictEqual(stripLetterPII('703-555-1234'), '703-555-1234');
+// SCOPE CHANGE 2026-08-29 (owner default 2, desktop-redactor safety pass):
+// personal phones and emails ARE redacted now, conservatively. The public-VA
+// guards below are the load-bearing part: every VA letter prints its own
+// toll-free help lines and agency inboxes, and those must stay readable.
+test('stripLetterPII: personal phones redacted, public VA lines and bare digits untouched', () => {
+  assert.strictEqual(stripLetterPII('703-555-1234'), '[PHONE REDACTED]');
+  assert.strictEqual(stripLetterPII('(571) 555-9999'), '[PHONE REDACTED]');
+  assert.strictEqual(stripLetterPII('+1 703.555.1234'), '[PHONE REDACTED]');
+  // Unformatted 10 digits stay out of scope: too collision-prone.
   assert.strictEqual(stripLetterPII('7035551234'), '7035551234');
+  assert.strictEqual(stripLetterPII('call 1-800-827-1000 or TDD: 711'), 'call 1-800-827-1000 or TDD: 711');
+  assert.strictEqual(stripLetterPII('(877) 827-3702 begins the refund process'), '(877) 827-3702 begins the refund process');
+});
+
+test('stripLetterPII: personal emails redacted, va.gov agency inboxes untouched', () => {
+  assert.strictEqual(stripLetterPII('write veteran.name+tag@sub.example.com today'), 'write [EMAIL REDACTED] today');
+  assert.strictEqual(stripLetterPII('send to IntakeCenter@va.gov or benefits@vba.va.gov'), 'send to IntakeCenter@va.gov or benefits@vba.va.gov');
+});
+
+test('stripLetterPII: two-character surname redacted in the trusted footer context only', () => {
+  const out = stripLetterPII('please respond. LI, AMY ICN: 1234567890V123456 Page 3');
+  assert.ok(!/\bLI\b/.test(out), 'two-char footer surname survived: ' + out);
+  assert.ok(!/AMY/.test(out), 'first name survived');
+  // Outside a trusted anchor, short capitalized tokens stay (state codes,
+  // org abbreviations): PII_ORG_WORDS plus no-anchor means no match.
+  assert.strictEqual(stripLetterPII('moved from GA to WI last year'), 'moved from GA to WI last year');
 });
 
 test('stripLetterPII false-positive guard: a plain prose date survives when no labeled DOB exists anywhere', () => {

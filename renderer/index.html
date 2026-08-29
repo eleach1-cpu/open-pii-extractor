@@ -52,6 +52,20 @@
     .li-safe-note { font-size: .78rem; color: var(--muted); margin: .6rem 0 0; }
     .err { color: var(--danger); }
     footer { text-align: center; font-size: .75rem; color: var(--muted); padding: 1rem; }
+    .li-save-reminder { flex-basis: 100%; font-size: .8rem; font-weight: 700; color: var(--danger); margin: .2rem 0 0; }
+    /* First-launch terms gate: a real blocking screen, not a dismissable
+       dialog. No Escape, no backdrop click, no X (safety handoff 9A). */
+    #terms-gate { position: fixed; inset: 0; background: var(--bg); z-index: 1000; overflow: auto; padding: 1.2rem; }
+    .terms-card { max-width: 720px; margin: 0 auto; background: var(--surface); border: 2px solid var(--gold); border-radius: 10px; padding: 1.2rem 1.4rem; }
+    .terms-card h2 { margin: 0 0 .6rem; font-size: 1.15rem; }
+    .terms-card h3 { margin: 1rem 0 .3rem; font-size: 1rem; }
+    .terms-card p { font-size: .92rem; margin: .5rem 0; }
+    .terms-check { display: flex; gap: .6rem; align-items: flex-start; margin: 1rem 0; }
+    .terms-check input { width: 22px; height: 22px; margin-top: .15rem; flex-shrink: 0; }
+    .terms-check label { font-size: .92rem; font-weight: 600; }
+    .terms-actions { display: flex; gap: .7rem; flex-wrap: wrap; margin-top: .8rem; }
+    .btn[disabled] { opacity: .45; cursor: not-allowed; border-color: var(--border); }
+    #terms-why { font-size: .8rem; color: var(--muted); min-height: 1.2em; }
   </style>
 </head>
 <body>
@@ -60,8 +74,27 @@
     <h1>Open PII Extractor</h1>
     <span class="credit">built by RateMyVSO.net</span>
   </header>
+  <div id="terms-gate" hidden role="region" aria-labelledby="terms-title">
+    <div class="terms-card">
+      <h2 id="terms-title" tabindex="-1">Important: You must verify the result</h2>
+      <p>Open PII Extractor is an automated aid. It can miss personal information, misread a document, remove information that is not personal, or produce an incomplete result if a file is damaged or unsupported.</p>
+      <p>You are responsible for reviewing every page of the original document and every page of the redacted output before saving, sharing, sending, printing, or uploading it. Do not rely on a black box, removed-text label, preview, or success message without checking the finished file yourself.</p>
+      <p>You are responsible for identifying and correcting anything the tool missed or removed incorrectly. RateMyVSO.net and Open PII Extractor do not guarantee that a document is complete, accurate, anonymous, compliant with any law or policy, or safe to disclose.</p>
+      <p>This tool is provided for general informational and document-assistance purposes. It is not legal advice, privacy advice, records-management advice, or a substitute for professional review when the document is sensitive or disclosure could cause harm.</p>
+      <p>All document processing is intended to occur on this computer. The app does not require an account, cloud OCR, or document upload. You should still protect the original and redacted files using appropriate device, storage, and transmission security.</p>
+      <div class="terms-check">
+        <input type="checkbox" id="terms-checkbox" aria-describedby="terms-why">
+        <label for="terms-checkbox">I have read and accept these terms. I understand that this tool provides an automated first pass only, and I am responsible for personally reviewing every page and every redaction before I save, share, send, print, or upload the result.</label>
+      </div>
+      <div class="terms-actions">
+        <button type="button" class="btn btn-green" id="terms-accept" disabled aria-describedby="terms-why">Accept and continue</button>
+        <button type="button" class="btn" id="terms-decline">Decline and exit</button>
+      </div>
+      <p id="terms-why" aria-live="polite">Check the box above to enable Accept and continue.</p>
+    </div>
+  </div>
   <main>
-    <span class="offline-badge">100% offline. This app cannot use the internet.</span>
+    <span class="offline-badge">All processing happens on this computer. No uploads, no cloud OCR, no account, no telemetry.</span>
     <div class="drop" id="drop-zone">
       <p><strong>Drop a VA letter here</strong> (PDF or photo, up to 5 files)</p>
       <p>or</p>
@@ -76,7 +109,7 @@
     </div>
     <div id="li-safe-preview" hidden></div>
   </main>
-  <footer>Everything happens on this computer. No uploads, no account, nothing stored. Auto-redaction is a first pass: always check the result yourself before sharing.</footer>
+  <footer>All document processing happens on this computer. The app does not upload your files, use cloud OCR, require an account, or send telemetry. Auto-redaction is a first pass: always check the result yourself before sharing.</footer>
   <script src="./vendor-jsqr.js"></script>
   <script src="../lib/layout-boxes.js"></script>
   <script src="../lib/qr-boxes.js"></script>

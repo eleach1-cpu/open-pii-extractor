@@ -45,3 +45,9 @@ photos. Same thresholds as the RateMyVSO.net Letter Interpreter.
 
 The redaction rules are copied from RateMyVSO_Platform and recorded in
 `SYNC.md` with source commit hashes. Improvements land there first.
+
+## Versioning (owner rule, 2026-08-29)
+
+Version 1.0.0 lands with the post-Codex fixes. After that, EVERY commit bumps
+the version by 0.1 (1.0 -> 1.1 -> 1.2 ...) in package.json, in the same
+commit. No exceptions, no batching several commits under one version.

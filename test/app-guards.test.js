@@ -17,9 +17,39 @@ test('offline enforcement: every web request cancelled, every permission denied'
   assert.match(htmlSrc, /connect-src 'none'/, 'renderer CSP lost connect-src none');
 });
 
-test('renderer is sandboxed from Node', () => {
+// Source-level pins; the RUNTIME proof (process.sandboxed === true in the
+// live renderer) lives in test/electron-smoke.test.js, because a grep can
+// not prove a runtime property (safety handoff §10.6).
+test('renderer isolation flags: contextIsolation, no nodeIntegration, OS sandbox ON', () => {
   assert.match(mainSrc, /contextIsolation:\s*true/);
   assert.match(mainSrc, /nodeIntegration:\s*false/);
+  assert.match(mainSrc, /sandbox:\s*true/);
+  assert.doesNotMatch(mainSrc, /sandbox:\s*false/);
+  assert.match(mainSrc, /app\.enableSandbox\(\)/);
+});
+
+test('offline copy is the precise no-upload wording, not the absolute claim', () => {
+  assert.ok(htmlSrc.includes('All processing happens on this computer. No uploads, no cloud OCR, no account, no telemetry.'));
+  assert.ok(!/cannot use the internet/i.test(htmlSrc), 'absolute internet claim is back (owner default 3)');
+});
+
+test('first-launch terms gate markup: unchecked box, disabled Accept, Decline, no escape hatch', () => {
+  assert.match(htmlSrc, /id="terms-gate" hidden/);
+  assert.match(htmlSrc, /id="terms-checkbox"(?![^>]*checked)/, 'checkbox must start unchecked');
+  assert.match(htmlSrc, /id="terms-accept" disabled/);
+  assert.match(htmlSrc, /id="terms-decline"/);
+  assert.ok(htmlSrc.includes('I have read and accept these terms.'));
+  assert.ok(htmlSrc.includes('Important: You must verify the result'));
+  const appSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'app.js'), 'utf8');
+  assert.ok(/Escape'\) e\.preventDefault\(\)/.test(appSrc), 'Escape must not dismiss the gate');
+});
+
+test('the review reminder sits beside the save controls for all output modes', () => {
+  const sp = fs.readFileSync(path.join(ROOT, 'renderer', 'safe-preview.js'), 'utf8');
+  assert.ok(sp.includes('Review every page before sharing. Automatic redaction can miss information or remove the wrong text.'));
+  // One actions row hosts all save buttons, so one reminder covers text,
+  // plain-PDF, and original-layout output.
+  assert.ok(sp.indexOf('li-save-reminder') > sp.indexOf('li-safe-save-layout'));
 });
 
 test('tessdata is bundled and env-pinned before lib requires', () => {

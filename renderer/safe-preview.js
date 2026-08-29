@@ -12,6 +12,7 @@
   var REMOVED_LABELS = {
     SSN: 'Removed SSN', DOB: 'Removed DOB', 'FILE#': 'Removed File Number',
     ADDRESS: 'Removed Address', NAME: 'Removed Name', ID: 'Removed ID',
+    PHONE: 'Removed Phone', EMAIL: 'Removed Email',
   };
 
   document.addEventListener('DOMContentLoaded', function () {
@@ -25,12 +26,12 @@
     }
 
     function renderSampleTokens(text) {
-      var pieces = String(text).split(/(\[(?:SSN|DOB|FILE#|ADDRESS|NAME|ID) REDACTED\])/g);
+      var pieces = String(text).split(/(\[(?:SSN|DOB|FILE#|ADDRESS|NAME|ID|PHONE|EMAIL) REDACTED\])/g);
       var html = '';
       for (var i = 0; i < pieces.length; i++) {
         var p = pieces[i];
         if (p === '' || p == null) continue;
-        var mk = p.match(/^\[(SSN|DOB|FILE#|ADDRESS|NAME|ID) REDACTED\]$/);
+        var mk = p.match(/^\[(SSN|DOB|FILE#|ADDRESS|NAME|ID|PHONE|EMAIL) REDACTED\]$/);
         if (mk) { html += '<span class="li-removed">' + esc(REMOVED_LABELS[mk[1]] || 'Removed') + '</span>'; continue; }
         p.replace(/(\s+)|([^\s]+)/g, function (whole, sep, word) {
           if (sep !== undefined) html += esc(sep);
@@ -61,6 +62,9 @@
     }
 
     function renderError(msg) {
+      // A failed attempt must never leave an older result exportable
+      // (safety handoff: stale-state clearing).
+      if (window.clearStagedState) window.clearStagedState();
       panel.innerHTML =
         '<div class="li-safe-box"><h3>&#128274; Redaction</h3>' +
         '<p class="li-safe-intro err">' + esc(msg || 'Could not read the file.') + '</p>' +
@@ -91,6 +95,7 @@
             '<button type="button" class="btn" id="li-safe-save-pdf">Save as plain-text PDF</button>' +
             '<button type="button" class="btn" id="li-safe-copy">Copy redacted text</button>' +
             '<button type="button" class="btn" id="li-safe-close">Close</button>' +
+            '<p class="li-save-reminder">Review every page before sharing. Automatic redaction can miss information or remove the wrong text.</p>' +
           '</div>' +
         '</div>';
       panel.hidden = false;
@@ -133,13 +138,17 @@
       var wireSave = function (id, fn, label) {
         var btn = document.getElementById(id);
         if (!btn) return;
+        var restore = function (text, ms) { btn.textContent = text; setTimeout(function () { btn.textContent = label; }, ms); };
         btn.addEventListener('click', function () {
           fn(collectFinalText(sampleEl)).then(function (r) {
             if (r && r.saved) {
-              btn.textContent = 'Saved!';
-              setTimeout(function () { btn.textContent = label; }, 1500);
+              restore('Saved!', 1500);
               if (r.path) window.api.reveal(r.path);
+            } else if (r && r.error) {
+              restore(r.error, 3500);
             }
+          }).catch(function () {
+            restore('Save failed. Try again.', 3000);
           });
         });
       };
@@ -192,6 +201,7 @@
     window.LetterSafePreview = {
       previewFiles: function (files) { return runPreview({ files: files }); },
       previewText: function (text) { return runPreview({ text: text }); },
+      showError: renderError,
     };
   });
 })();
