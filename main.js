@@ -143,3 +143,17 @@ ipcMain.handle('save-text', async (_e, text) => {
 });
 
 ipcMain.handle('reveal', async (_e, p) => { if (p) shell.showItemInFolder(p); });
+
+// Text-reconstruction PDF export; the builder lives in lib/ so the test
+// suite exercises it without Electron.
+const { buildRedactedPdf } = require('./lib/build-redacted-pdf');
+ipcMain.handle('save-pdf', async (_e, text) => {
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    title: 'Save redacted copy as PDF',
+    defaultPath: 'redacted-letter.pdf',
+    filters: [{ name: 'PDF file', extensions: ['pdf'] }],
+  });
+  if (canceled || !filePath) return { saved: false };
+  fs.writeFileSync(filePath, Buffer.from(await buildRedactedPdf(text)));
+  return { saved: true, path: filePath };
+});

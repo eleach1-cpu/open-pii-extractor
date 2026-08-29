@@ -8,10 +8,11 @@
   "author": "RateMyVSO.net",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/pii-redaction.test.js",
+    "test": "node --test test/pii-redaction.test.js test/app-guards.test.js",
     "dist": "electron-builder --win"
   },
   "dependencies": {
+    "pdf-lib": "^1.17.1",
     "pdf-to-img": "^4.5.0",
     "tesseract.js": "^5.1.1"
   },

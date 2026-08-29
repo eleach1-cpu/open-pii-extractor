@@ -6,5 +6,6 @@ contextBridge.exposeInMainWorld('api', {
   redact: (payload) => ipcRenderer.invoke('redact', payload),
   openFiles: () => ipcRenderer.invoke('open-files'),
   saveText: (text) => ipcRenderer.invoke('save-text', text),
+  savePdf: (text) => ipcRenderer.invoke('save-pdf', text),
   reveal: (p) => ipcRenderer.invoke('reveal', p),
 });

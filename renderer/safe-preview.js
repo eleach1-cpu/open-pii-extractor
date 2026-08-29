@@ -86,7 +86,8 @@
           '<div class="li-safe-sample" id="li-safe-sample">' + renderSampleTokens(redactedText) + '</div>' +
           '<p class="li-safe-note">Only what you see here goes into the saved copy. Nothing has left this computer.</p>' +
           '<div class="li-safe-actions">' +
-            '<button type="button" class="btn btn-green" id="li-safe-save">Save redacted copy</button>' +
+            '<button type="button" class="btn btn-green" id="li-safe-save">Save as text file</button>' +
+            '<button type="button" class="btn btn-green" id="li-safe-save-pdf">Save as PDF</button>' +
             '<button type="button" class="btn" id="li-safe-copy">Copy redacted text</button>' +
             '<button type="button" class="btn" id="li-safe-close">Close</button>' +
           '</div>' +
@@ -128,16 +129,21 @@
         } else { fallbackCopy(t); done(); }
       });
 
-      var saveBtn = document.getElementById('li-safe-save');
-      if (saveBtn) saveBtn.addEventListener('click', function () {
-        window.api.saveText(collectFinalText(sampleEl)).then(function (r) {
-          if (r && r.saved) {
-            saveBtn.textContent = 'Saved!';
-            setTimeout(function () { saveBtn.textContent = 'Save redacted copy'; }, 1500);
-            if (r.path) window.api.reveal(r.path);
-          }
+      var wireSave = function (id, fn, label) {
+        var btn = document.getElementById(id);
+        if (!btn) return;
+        btn.addEventListener('click', function () {
+          fn(collectFinalText(sampleEl)).then(function (r) {
+            if (r && r.saved) {
+              btn.textContent = 'Saved!';
+              setTimeout(function () { btn.textContent = label; }, 1500);
+              if (r.path) window.api.reveal(r.path);
+            }
+          });
         });
-      });
+      };
+      wireSave('li-safe-save', window.api.saveText, 'Save as text file');
+      wireSave('li-safe-save-pdf', window.api.savePdf, 'Save as PDF');
       wireClose();
     }
 
