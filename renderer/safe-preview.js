@@ -86,8 +86,9 @@
           '<div class="li-safe-sample" id="li-safe-sample">' + renderSampleTokens(redactedText) + '</div>' +
           '<p class="li-safe-note">Only what you see here goes into the saved copy. Nothing has left this computer.</p>' +
           '<div class="li-safe-actions">' +
-            '<button type="button" class="btn btn-green" id="li-safe-save">Save as text file</button>' +
-            '<button type="button" class="btn btn-green" id="li-safe-save-pdf">Save as PDF</button>' +
+            '<button type="button" class="btn btn-green" id="li-safe-save-layout">Save redacted PDF (original layout)</button>' +
+            '<button type="button" class="btn" id="li-safe-save">Save as text file</button>' +
+            '<button type="button" class="btn" id="li-safe-save-pdf">Save as plain-text PDF</button>' +
             '<button type="button" class="btn" id="li-safe-copy">Copy redacted text</button>' +
             '<button type="button" class="btn" id="li-safe-close">Close</button>' +
           '</div>' +
@@ -143,7 +144,33 @@
         });
       };
       wireSave('li-safe-save', window.api.saveText, 'Save as text file');
-      wireSave('li-safe-save-pdf', window.api.savePdf, 'Save as PDF');
+      wireSave('li-safe-save-pdf', window.api.savePdf, 'Save as plain-text PDF');
+
+      // Original-layout export: every auto-redacted span plus every tapped
+      // word gets blacked out on the rasterized original pages (app.js).
+      var layoutBtn = document.getElementById('li-safe-save-layout');
+      if (layoutBtn) layoutBtn.addEventListener('click', function () {
+        var tapped = [];
+        sampleEl.querySelectorAll('.li-word.li-removed').forEach(function (x) {
+          tapped.push(x.getAttribute('data-orig') || '');
+        });
+        layoutBtn.textContent = 'Building PDF...';
+        window.exportLayoutPdf(tapped).then(function (r) {
+          if (r && r.saved) {
+            layoutBtn.textContent = 'Saved!';
+            if (r.path) window.api.reveal(r.path);
+          } else if (r && r.error) {
+            layoutBtn.textContent = r.error;
+          } else {
+            layoutBtn.textContent = 'Save redacted PDF (original layout)';
+            return;
+          }
+          setTimeout(function () { layoutBtn.textContent = 'Save redacted PDF (original layout)'; }, 3000);
+        }).catch(function () {
+          layoutBtn.textContent = 'Export failed';
+          setTimeout(function () { layoutBtn.textContent = 'Save redacted PDF (original layout)'; }, 3000);
+        });
+      });
       wireClose();
     }
 
@@ -152,6 +179,9 @@
       try {
         var data = await window.api.redact(payload);
         if (data && data.error) throw new Error(data.error);
+        // The original-layout export (app.js) needs the auto-redacted spans
+        // and the OCR layouts alongside the visible text.
+        window.__redactMeta = { spans: (data && data.spans) || [], layouts: (data && data.layouts) || [] };
         renderResult((data && data.redacted_text) || '');
       } catch (err) {
         renderError(err.message);

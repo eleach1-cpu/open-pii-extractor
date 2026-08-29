@@ -568,3 +568,16 @@ test('PII_ORG_WORDS is defined exactly once, in va-pii-rules.js', () => {
   assert.strictEqual(definedInStrip, false, 'strip-letter-pii.js must not define PII_ORG_WORDS, only require it');
   assert.strictEqual(definedInRules, true, 'va-pii-rules.js must define PII_ORG_WORDS');
 });
+
+// OCR-split ICN (found 2026-08-29 by the desktop redactor's adversarial
+// round trip): Tesseract reads "123456789V123456" with a space after the V,
+// and the pre-fix rule order let the bare-SSN rule half-consume the nine
+// digits, leaving the "123456" tail readable. The whole spaced form must be
+// consumed as ONE ID, in every spacing variant, before any other digit rule.
+test('stripLetterPII: OCR-split ICN is consumed whole in all spacing variants', () => {
+  for (const t of ['ICN: 123456789V 123456', 'ICN: 123456789 V123456', 'bare 123456789 V 123456 end']) {
+    const out = stripLetterPII(t);
+    assert.ok(out.includes('[ID REDACTED]'), `${t} -> ${out}: no ID redaction`);
+    assert.ok(!/123456/.test(out), `${t} -> ${out}: ICN tail survived`);
+  }
+});

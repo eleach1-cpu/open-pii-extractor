@@ -7,5 +7,6 @@ contextBridge.exposeInMainWorld('api', {
   openFiles: () => ipcRenderer.invoke('open-files'),
   saveText: (text) => ipcRenderer.invoke('save-text', text),
   savePdf: (text) => ipcRenderer.invoke('save-pdf', text),
+  saveLayoutPdf: (pages) => ipcRenderer.invoke('save-layout-pdf', pages),
   reveal: (p) => ipcRenderer.invoke('reveal', p),
 });

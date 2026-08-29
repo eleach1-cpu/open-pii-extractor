@@ -24,6 +24,7 @@ process.env.TESSERACT_CACHE_DIR = TESSDATA_DIR;
 
 const { stripLetterPII } = require('./lib/strip-letter-pii');
 const { ocrImage, ocrPdf } = require('./lib/local-ocr');
+const { findRedactedSpans } = require('./lib/redaction-spans');
 
 const MAX_CHARS = 120000; // same budget as the site's redaction gate
 
@@ -79,7 +80,8 @@ ipcMain.handle('redact', async (_e, payload) => {
   try {
     const body = payload || {};
     if (typeof body.text === 'string' && body.text.trim()) {
-      return { redacted_text: stripLetterPII(body.text.trim().slice(0, MAX_CHARS)), ocr_used: false };
+      const { spans, redacted } = findRedactedSpans(body.text.trim().slice(0, MAX_CHARS));
+      return { redacted_text: redacted, ocr_used: false, spans, layouts: [] };
     }
     const files = Array.isArray(body.files) ? body.files : [];
     if (!files.length) return { error: 'No input provided.' };
@@ -87,25 +89,37 @@ ipcMain.handle('redact', async (_e, payload) => {
 
     let ocrUsed = false;
     const parts = [];
+    // Per-file OCR layouts (word bounding boxes + page rasters), aligned by
+    // index with the renderer's staged file list; null for text-lane files.
+    // The renderer uses them for the original-layout export.
+    const layouts = [];
     for (const f of files) {
       if (f.kind === 'text' && f.text) {
         parts.push(String(f.text).trim());
+        layouts.push(null);
       } else if (f.kind === 'pdf' && f.base64) {
         ocrUsed = true;
-        parts.push(await ocrPdf(f.base64, f.name || 'document.pdf'));
+        const out = await ocrPdf(f.base64, f.name || 'document.pdf', true);
+        parts.push(out.text);
+        layouts.push(out.layout || null);
       } else if (f.kind === 'image' && f.base64) {
         ocrUsed = true;
-        parts.push(await ocrImage(f.base64, f.name || 'image'));
+        const out = await ocrImage(f.base64, f.name || 'image', true);
+        parts.push(out.text);
+        layouts.push(out.layout || null);
+      } else {
+        layouts.push(null);
       }
     }
-    const combined = stripLetterPII(parts.join('\n\n').trim());
-    if (combined.length < 20) {
+    const original = parts.join('\n\n').trim();
+    const { spans, redacted } = findRedactedSpans(original.slice(0, MAX_CHARS));
+    if (redacted.length < 20) {
       return { error: "We couldn't read enough text. Try a clearer copy, or paste the text instead." };
     }
-    if (combined.length > MAX_CHARS) {
+    if (redacted.length > MAX_CHARS) {
       return { error: 'That is too long. Open the decision letter alone, or paste the key section.' };
     }
-    return { redacted_text: combined, ocr_used: ocrUsed };
+    return { redacted_text: redacted, ocr_used: ocrUsed, spans, layouts };
   } catch (err) {
     if (err && err.userFacing) return { error: err.message };
     console.error('[redact] error:', err && err.message);
@@ -143,6 +157,21 @@ ipcMain.handle('save-text', async (_e, text) => {
 });
 
 ipcMain.handle('reveal', async (_e, p) => { if (p) shell.showItemInFolder(p); });
+
+// Original-layout redacted PDF (owner decision 2026-08-29): image-only pages
+// with black boxes drawn by pdf-lib; no text layer exists in the output.
+const { buildLayoutPdf } = require('./lib/build-layout-pdf');
+ipcMain.handle('save-layout-pdf', async (_e, pages) => {
+  if (!Array.isArray(pages) || !pages.length) return { saved: false, error: 'Nothing to export.' };
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    title: 'Save redacted PDF (original layout)',
+    defaultPath: 'redacted-letter.pdf',
+    filters: [{ name: 'PDF file', extensions: ['pdf'] }],
+  });
+  if (canceled || !filePath) return { saved: false };
+  fs.writeFileSync(filePath, Buffer.from(await buildLayoutPdf(pages)));
+  return { saved: true, path: filePath };
+});
 
 // Text-reconstruction PDF export; the builder lives in lib/ so the test
 // suite exercises it without Electron.

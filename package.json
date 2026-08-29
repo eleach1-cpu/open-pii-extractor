@@ -8,7 +8,7 @@
   "author": "RateMyVSO.net",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/pii-redaction.test.js test/app-guards.test.js",
+    "test": "node --test test/pii-redaction.test.js test/app-guards.test.js test/layout-redaction.test.js",
     "dist": "electron-builder --win"
   },
   "dependencies": {
