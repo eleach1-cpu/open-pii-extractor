@@ -108,18 +108,71 @@ function itemWords(item, viewport) {
   return out;
 }
 
+// Words too common to ever black out on their own. A single-token span like
+// "of" (a diff fail-safe artifact) boxed EVERY "of" on a real letter,
+// including "Explanation of Payment" in the sidebar (found 2026-08-29).
+// Multi-token spans are positional (consecutive words) and skip this filter;
+// a word the veteran TAPPED is honored verbatim, whatever it is.
+const COMMON_WORDS = new Set(['of', 'the', 'and', 'for', 'you', 'your', 'was', 'has', 'have', 'been', 'with', 'this', 'that', 'from', 'are', 'not', 'a', 'an', 'in', 'on', 'to', 'is', 'we', 'or', 'by', 'va', 'be', 'as', 'at', 'it']);
+
+// Public web addresses are never PII, but a diff span that swallows the
+// contact sidebar carries them, and their long tokens then contains-match
+// EVERY va.gov link on the letter (v2 export blacked four public URLs on one
+// page). Tokens for known public destinations are dropped from AUTO spans;
+// a tapped word is still honored verbatim.
+const PUBLIC_TOKEN_RE = /vagov|facebook|twitter|instagram|youtube|httpswww|wwwva/;
+
 function tokenLists(spans, tappedWords) {
   const norm = window.LayoutBoxes.normalizeToken;
   const lists = [];
+  const spanTokenSets = [];
   for (const s of spans || []) {
-    const l = String(s).split(/\s+/).map(norm).filter(Boolean);
-    if (l.length) lists.push(l);
+    const l = String(s).split(/\s+/).map(norm).filter(Boolean).filter((t) => !PUBLIC_TOKEN_RE.test(t));
+    if (!l.length) continue;
+    spanTokenSets.push(new Set(l));
+    if (l.length > 1) { lists.push(l); continue; }
+    if (l[0].length >= 4 && !COMMON_WORDS.has(l[0])) lists.push(l);
+  }
+  // A name rides through the letter in DIFFERENT word orders ("ERIC J LEACH"
+  // in the address block, "LEACH, ERIC J" in footers), so positional windows
+  // alone miss the page-header order (real letter, 2026-08-29). Any alphabetic
+  // token redacted in two or more distinct spans is promoted to a global
+  // single so every occurrence is boxed regardless of order.
+  const seenIn = new Map();
+  for (const set of spanTokenSets) {
+    for (const t of set) seenIn.set(t, (seenIn.get(t) || 0) + 1);
+  }
+  for (const [t, n] of seenIn) {
+    if (n >= 2 && t.length >= 4 && !/\d/.test(t) && !COMMON_WORDS.has(t)) lists.push([t]);
   }
   for (const w of tappedWords || []) {
     const t = norm(w);
     if (t) lists.push([t]);
   }
   return lists;
+}
+
+// QR codes carry identifiers no text rule can read; every decoded code on a
+// page gets boxed too (lib/qr-boxes.js, owner decision 2026-08-29).
+function qrRectsFromCanvas(canvas) {
+  const ctx = canvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return window.QrBoxes.qrRects(img.data, canvas.width, canvas.height);
+}
+
+function imageToCanvas(base64) {
+  return new Promise((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = im.naturalWidth;
+      canvas.height = im.naturalHeight;
+      canvas.getContext('2d').drawImage(im, 0, 0);
+      resolve(canvas);
+    };
+    im.onerror = () => reject(new Error('could not decode page image'));
+    im.src = 'data:image/png;base64,' + base64;
+  });
 }
 
 // Build the export pages for every staged file and hand them to the main
@@ -131,7 +184,11 @@ window.exportLayoutPdf = async function exportLayoutPdf(tappedWords) {
   for (let idx = 0; idx < stagedFiles.length; idx++) {
     const f = stagedFiles[idx];
     if (f.kind === 'digital-pdf') {
-      const pdf = await pdfjsLib.getDocument({ data: f.buffer.slice(0), disableFontFace: true, verbosity: 0 }).promise;
+      // disableFontFace must stay OFF for the RENDER pass: with it on,
+      // pdf.js silently paints nothing for VA letters' embedded subset
+      // fonts and whole paragraphs vanish from the raster (found on a real
+      // decision letter 2026-08-29). Extraction-only opens keep it on.
+      const pdf = await pdfjsLib.getDocument({ data: f.buffer.slice(0), disableFontFace: false, verbosity: 0 }).promise;
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const viewport = page.getViewport({ scale: RASTER_SCALE });
@@ -142,17 +199,19 @@ window.exportLayoutPdf = async function exportLayoutPdf(tappedWords) {
         const content = await page.getTextContent();
         const words = [];
         for (const item of content.items) words.push(...itemWords(item, viewport));
-        const rects = window.LayoutBoxes.boxesForWords(words, lists);
+        const rects = window.LayoutBoxes.boxesForWords(words, lists).concat(qrRectsFromCanvas(canvas));
         pages.push({ imgBase64: canvas.toDataURL('image/png').split(',')[1], scale: RASTER_SCALE, rects });
       }
     } else {
       const layout = (meta.layouts || [])[idx];
       if (!layout) continue;
       for (const p of layout.pages) {
+        let qr = [];
+        try { qr = qrRectsFromCanvas(await imageToCanvas(p.imgBase64)); } catch (e) { /* undecodable page image: text boxes still apply */ }
         pages.push({
           imgBase64: p.imgBase64,
           scale: layout.scale || 1,
-          rects: window.LayoutBoxes.boxesForWords(p.words || [], lists),
+          rects: window.LayoutBoxes.boxesForWords(p.words || [], lists).concat(qr),
         });
       }
     }

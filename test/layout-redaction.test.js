@@ -39,6 +39,10 @@ test('boxesForWords: exact, windowed, and fused matches; safe words unboxed', ()
   ];
   const lists = [['123456789'], ['123', 'maple', 'street'], ['123456789v123456']];
   const rects = boxesForWords(words, lists);
+  // Regression (real letter, 2026-08-29): a fused page-header run like
+  // "LEACH,ERIC" must be boxed by the standalone 5-char name token.
+  const fused = boxesForWords([{ text: 'LEACH,ERIC', x: 0, y: 0, w: 80, h: 10 }], [['leach']]);
+  assert.strictEqual(fused.length, 1, 'fused 5-char name token not boxed');
   const covers = (wordIdx) => rects.some((r) => r.x <= words[wordIdx].x && r.x + r.w >= words[wordIdx].x + words[wordIdx].w && r.y <= words[wordIdx].y);
   assert.ok(covers(2), 'SSN word not boxed');
   assert.ok(covers(3) && covers(4) && covers(5), 'address words not all boxed');
